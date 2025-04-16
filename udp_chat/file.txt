@@ -1,1 +1,2 @@
-echo
+this is the test file
+it exists just to check the workflow
