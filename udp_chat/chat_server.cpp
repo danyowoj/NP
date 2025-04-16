@@ -88,12 +88,12 @@ int main()
             {
                 // Клиент прошёл авторизацию – если его еще нет в списке, добавляем его
                 bool exists = false;
-                for (auto &c : clients)
+                for (auto it = clients.begin(); it != clients.end(); ++it)
                 {
-                    if (c.username == username)
+                    if (it->username == username)
                     {
                         // Обновляем адрес (на случай изменения)
-                        c.addr = clientAddr;
+                        it->addr = clientAddr;
                         exists = true;
                         break;
                     }
@@ -113,6 +113,25 @@ int main()
             }
             sendto(sockfd, reply.c_str(), reply.size(), 0, (struct sockaddr *)&clientAddr, clientLen);
         }
+        // Обработка команды отключения: "QUIT username"
+        else if (message.substr(0, 4) == "QUIT")
+        {
+            size_t pos = message.find(' ');
+            if (pos != std::string::npos)
+            {
+                std::string username = message.substr(pos + 1);
+                // Удаляем клиента из списка
+                for (auto it = clients.begin(); it != clients.end(); ++it)
+                {
+                    if (it->username == username)
+                    {
+                        std::cout << "Пользователь " << username << " отключился." << std::endl;
+                        clients.erase(it);
+                        break;
+                    }
+                }
+            }
+        }
         // Публичное сообщение: формат "MSG username: сообщение"
         else if (message.substr(0, 3) == "MSG")
         {
@@ -129,7 +148,6 @@ int main()
         // Приватное сообщение: формат "PRIVATE target_username sender_username сообщение"
         else if (message.substr(0, 7) == "PRIVATE")
         {
-            // Извлекаем целевого получателя, отправителя и текст сообщения
             size_t pos1 = message.find(' ');
             if (pos1 == std::string::npos)
                 continue;
@@ -164,7 +182,6 @@ int main()
         // Запрос на передачу файла: формат "FILE_REQ target_username sender_username filename filesize"
         else if (message.substr(0, 8) == "FILE_REQ")
         {
-            // Разбираем сообщение и пересылаем его целевому клиенту
             std::istringstream iss(message);
             std::string command, target, sender, filename, filesize;
             iss >> command >> target >> sender >> filename >> filesize;
@@ -173,7 +190,6 @@ int main()
             {
                 if (c.username == target)
                 {
-                    // Пересылаем сообщение: "FILE_REQ sender filename filesize"
                     std::string forward = "FILE_REQ " + sender + " " + filename + " " + filesize;
                     sendto(sockfd, forward.c_str(), forward.size(), 0,
                            (struct sockaddr *)&c.addr, sizeof(c.addr));
@@ -190,7 +206,6 @@ int main()
         // Передача информации о TCP-порту для передачи файла: формат "FILE_PORT target_username sender_username ip port"
         else if (message.substr(0, 9) == "FILE_PORT")
         {
-            // Пересылаем сообщение отправителю файла
             std::istringstream iss(message);
             std::string command, target, sender, ip, port;
             iss >> command >> target >> sender >> ip >> port;

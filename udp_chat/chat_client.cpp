@@ -62,7 +62,6 @@ void udp_listener(int sockfd)
                               << ", но уже есть ожидающий запрос. Новый запрос игнорируется.\n";
                     continue;
                 }
-                // Сохраняем данные о новом запросе
                 pendingFileRequest.sender = sender;
                 pendingFileRequest.filename = filename;
                 pendingFileRequest.filesize = filesize;
@@ -185,7 +184,7 @@ int main(int argc, char *argv[])
               << "  /file <username> <путь_к_файлу> – передача файла\n"
               << "  /accept – принять входящий запрос на файл\n"
               << "  /decline – отклонить входящий запрос на файл\n"
-              << "  /quit – выход\n"
+              << "  /quit – выйти и отключиться от сервера\n"
               << std::endl;
 
     // Главный цикл отправки сообщений и обработки команд
@@ -196,10 +195,18 @@ int main(int argc, char *argv[])
         if (input.empty())
             continue;
 
+        // Если введена команда "/quit", отправляем сообщение серверу, завершаем работу
+        if (input == "/quit")
+        {
+            std::string quitMsg = "QUIT " + username;
+            sendto(udpSock, quitMsg.c_str(), quitMsg.size(), 0,
+                   (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+            running = false;
+            break;
+        }
         // Обработка команды для принятия файла
         if (input == "/accept")
         {
-            // Проверяем, есть ли ожидающий запрос
             FileRequest req;
             {
                 std::lock_guard<std::mutex> lock(fileReqMutex);
@@ -211,7 +218,6 @@ int main(int argc, char *argv[])
                 req = pendingFileRequest;
                 pendingFileRequest.pending = false;
             }
-            // Открываем TCP-сокет для приёма файла на свободном порту
             int tcpSock = socket(AF_INET, SOCK_STREAM, 0);
             if (tcpSock < 0)
             {
@@ -222,7 +228,7 @@ int main(int argc, char *argv[])
             memset(&tcpAddr, 0, sizeof(tcpAddr));
             tcpAddr.sin_family = AF_INET;
             tcpAddr.sin_addr.s_addr = INADDR_ANY;
-            tcpAddr.sin_port = 0; // ОС выберет свободный порт
+            tcpAddr.sin_port = 0;
 
             if (bind(tcpSock, (struct sockaddr *)&tcpAddr, sizeof(tcpAddr)) < 0)
             {
@@ -240,9 +246,7 @@ int main(int argc, char *argv[])
             int tcpPort = ntohs(tcpAddr.sin_port);
             listen(tcpSock, 1);
 
-            // Отправляем через сервер сообщение с информацией о TCP-порту:
-            // Формат: "FILE_PORT <target_username> <receiver_username> <ip> <port>"
-            std::string localIP = "127.0.0.1"; // для упрощения, предполагается, что клиенты на одной машине
+            std::string localIP = "127.0.0.1"; // Предположение: клиенты на одной машине
             std::string filePortMsg = "FILE_PORT " + req.sender + " " + myUsername + " " + localIP + " " + std::to_string(tcpPort);
             sendto(udpSock, filePortMsg.c_str(), filePortMsg.size(), 0,
                    (struct sockaddr *)&serverAddr, sizeof(serverAddr));
@@ -292,16 +296,9 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        // Команда выхода
-        if (input == "/quit")
-        {
-            running = false;
-            break;
-        }
         // Приватное сообщение
         if (input.substr(0, 8) == "/private")
         {
-            // Формат: /private target_username сообщение...
             std::istringstream iss(input);
             std::string command, target;
             iss >> command >> target;
@@ -314,11 +311,9 @@ int main(int argc, char *argv[])
         // Передача файла (инициатор)
         else if (input.substr(0, 5) == "/file")
         {
-            // Формат: /file target_username путь_к_файлу
             std::istringstream iss(input);
             std::string command, target, filepath;
             iss >> command >> target >> filepath;
-            // Определяем размер файла
             std::ifstream inFile(filepath, std::ios::binary | std::ios::ate);
             if (!inFile)
             {
@@ -327,24 +322,20 @@ int main(int argc, char *argv[])
             }
             std::streamsize filesize = inFile.tellg();
             inFile.close();
-            // Извлекаем имя файла (без пути)
             size_t pos = filepath.find_last_of("/\\");
             std::string filename = (pos == std::string::npos) ? filepath : filepath.substr(pos + 1);
-            // Формируем сообщение запроса передачи файла:
-            // "FILE_REQ target_username username filename filesize"
             std::string fileReq = "FILE_REQ " + target + " " + username + " " + filename + " " + std::to_string(filesize);
             sendto(udpSock, fileReq.c_str(), fileReq.size(), 0,
                    (struct sockaddr *)&serverAddr, sizeof(serverAddr));
             std::cout << "Запрос передачи файла отправлен пользователю " << target << std::endl;
 
-            // Ожидаем ответ с информацией о TCP-порту (FILE_PORT)
             std::cout << "Ожидаем информацию о TCP-порту для передачи файла..." << std::endl;
             bool receivedPort = false;
             std::string peerIP;
             int peerPort = 0;
             fd_set readfds;
             struct timeval tv;
-            tv.tv_sec = 10; // таймаут 10 секунд
+            tv.tv_sec = 10;
             tv.tv_usec = 0;
             FD_ZERO(&readfds);
             FD_SET(udpSock, &readfds);
@@ -356,13 +347,11 @@ int main(int argc, char *argv[])
                 {
                     buffer[n2] = '\0';
                     std::string resp(buffer);
-                    // Если получено сообщение FILE_PORT, формат: "FILE_PORT sender_ip tcpPort"
                     if (resp.substr(0, 9) == "FILE_PORT")
                     {
                         std::istringstream iss2(resp);
                         std::string cmd, sender;
                         iss2 >> cmd >> sender >> peerIP >> peerPort;
-                        // Проверяем, что отправитель совпадает с целевым пользователем
                         if (sender == target)
                         {
                             receivedPort = true;
@@ -380,7 +369,7 @@ int main(int argc, char *argv[])
                 std::cout << "Не получена информация о порте для передачи файла. Передача прервана." << std::endl;
             }
         }
-        // Публичное сообщение
+        // Обычное (публичное) сообщение
         else
         {
             std::string outMsg = "MSG " + username + ": " + input;
@@ -389,7 +378,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    listener.join();
     close(udpSock);
+    exit(0);
     return 0;
 }
