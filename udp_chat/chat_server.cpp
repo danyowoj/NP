@@ -54,7 +54,8 @@ int main()
     // "Жёстко" заданный список пользователей (логин:пароль)
     std::map<std::string, std::string> validUsers = {
         {"user1", "password1"},
-        {"user2", "password2"}};
+        {"user2", "password2"},
+        {"user3", "password3"}};
 
     // Список подключенных клиентов (после авторизации)
     std::vector<ClientInfo> clients;
